@@ -412,7 +412,8 @@ function updateBall(dt) {
   if (ball.ignoreT > 0 && (ball.ignoreT -= dt) <= 0) ball.ignore = null;
   if (ball.owner) {
     const o = ball.owner, f = o.forward();
-    const target = new V(o.pos.x + f.x * 1.0, BR, o.pos.z + f.z * 1.0);
+    // held at chest height while airborne, settling to the feet on landing
+    const target = new V(o.pos.x + f.x * 1.0, BR + (o.pos.y > 0.05 ? o.pos.y + 0.6 : 0), o.pos.z + f.z * 1.0);
     ball.pos.lerp(target, 1 - Math.exp(-16 * dt));
     ball.vel.copy(o.vel); ball.vel.y = 0;
   } else {
@@ -424,7 +425,7 @@ function updateBall(dt) {
     const me = human;
     if (ball.pos.y > 1.2 && !ball.super && me.stun <= 0 && !(ball.last === me && clockT - ball.kickT < 0.5)) {
       const to = new V(me.pos.x, me.pos.y + 1.6, me.pos.z).sub(ball.pos), d = to.length();
-      if (d < 6 && d > 0.3) ball.vel.addScaledVector(to.normalize(), 16 * (1 - d / 6) * dt);
+      if (d < 6 && d > 0.3) ball.vel.addScaledVector(to.normalize(), (me.pos.y > 0.25 ? 30 : 16) * (1 - d / 6) * dt); // stronger while you're airborne
     }
     ball.pos.addScaledVector(ball.vel, dt);
     if (ball.pos.y < BR) {
@@ -509,6 +510,10 @@ function possession(dt) {
     if (g.stun > 0 || g.kickCd > 0 || ball.owner === g) continue;
     const gk = g.role === 'gk';
     const d = hdist(g.pos, ball.pos), rel = ball.pos.y - g.pos.y;
+    // mid-air you trap the ball instead: it sticks to you until you shoot or land with it
+    if (g.human && !ball.owner && g.pos.y > 0.25 && ball.ignore !== g && !(ball.super && bs > 12) && d < 1.6 && rel > -0.8 && rel < 2.8) {
+      take(g); g.immune = Math.max(g.immune, 1.2); sfx.header(); continue;
+    }
     // anything at head height gets headed
     if (!ball.owner && !gk && ball.ignore !== g && !(ball.super && bs > 12) && d < 0.95 && rel > 1.0 && rel < 2.7) { header(g); continue; }
     if (d > (gk ? 1.4 : 1.05) || rel > (gk ? 2.7 : 1.0) || rel < -0.5) continue;
