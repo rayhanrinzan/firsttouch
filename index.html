@@ -280,7 +280,7 @@ class Guy {
     this.vel = new V(); this.wish = new V(); this.vy = 0;
     this.dir = team === 0 ? 1 : -1;             // attacking direction along x
     this.yaw = yawTo(this.dir, 0);
-    this.kickCd = 0; this.stun = 0; this.slide = 0; this.slideCd = 0; this.think = Math.random() * 0.3; this.hold = 0;
+    this.kickCd = 0; this.stun = 0; this.slide = 0; this.slideCd = 0; this.immune = 0; this.think = Math.random() * 0.3; this.hold = 0;
     this.runPhase = 0;
     const color = role === 'gk' ? (team === 0 ? 0x22d3ee : 0x84cc16) : (team === 0 ? 0x2563eb : 0xdc2626);
     this.m = makeGuyMesh(color);
@@ -447,7 +447,7 @@ function possession(dt) {
     const d = hdist(g.pos, ball.pos), rel = ball.pos.y - g.pos.y;
     if (d > (gk ? 1.4 : 1.05) || rel > (gk ? 2.7 : 1.3) || rel < -0.5) continue;
     if (ball.owner) {
-      if (ball.owner.team === g.team) continue;
+      if (ball.owner.team === g.team || ball.owner.immune > 0) continue;
       if (Math.random() < dt * (g.human ? 3 : 1.3)) { ball.owner.kickCd = 0.8; take(g); sfx.tackle(); }
       continue;
     }
@@ -537,7 +537,7 @@ function updateHuman(dt) {
   const sprint = keys.ShiftLeft || keys.ShiftRight;
   const canSprint = sprint && moving && stamina > 0.02;
   stamina = THREE.MathUtils.clamp(stamina + (canSprint ? -0.28 : 0.16) * dt, 0, 1);
-  let speed = canSprint ? 13 : 8.5;
+  let speed = canSprint ? 16.5 : 11;
   if (ball.owner === me) speed *= 0.9;
   me.wish.copy(wish).multiplyScalar(speed);
 
@@ -552,10 +552,10 @@ function updateHuman(dt) {
   if (me.slide > 0) {
     if (ball.owner && ball.owner.team !== me.team && hdist(me.pos, ball.owner.pos) < 1.7) {
       const victim = ball.owner; knockDown(victim, 1.3); victim.kickCd = 1;
-      ball.vel.copy(f).multiplyScalar(7); ball.vel.y = 2.5; ball.ignore = victim; ball.ignoreT = 1;
+      take(me); me.immune = 1;
       shake = 0.25; toast('Clean tackle!');
     } else if (!ball.owner && hdist(me.pos, ball.pos) < 1.3 && ball.pos.y < 1) {
-      ball.vel.copy(f).multiplyScalar(12); ball.vel.y = 2;
+      take(me); me.immune = 1;
     }
     for (const g of guys) if (g.team !== me.team && g !== ball.owner && g.stun <= 0 && hdist(me.pos, g.pos) < 1.2) knockDown(g, 1);
   }
@@ -566,6 +566,7 @@ function moveGuys(dt) {
   for (const g of guys) {
     g.kickCd = Math.max(0, g.kickCd - dt);
     g.slideCd = Math.max(0, g.slideCd - dt);
+    g.immune = Math.max(0, g.immune - dt);
     if (g.stun > 0) { g.stun -= dt; g.vel.multiplyScalar(Math.exp(-6 * dt)); }
     else if (g.slide > 0) { g.slide -= dt; g.vel.multiplyScalar(Math.exp(-3 * dt)); }
     else {
