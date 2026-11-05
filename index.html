@@ -91,7 +91,7 @@
 // ================= constants =================
 const V = THREE.Vector3;
 const W = 30, H = 20;            // pitch half-length (x) / half-width (z)
-const GW = 4, GH = 2.8, GD = 2.2; // goal half-width, height, depth
+const GW = 5, GH = 3.4, GD = 2.4; // goal half-width, height, depth
 const BR = 0.42, GRAV = 12;      // ball radius, ball gravity (very floaty on purpose)
 const MATCH_TIME = 180;
 const $ = id => document.getElementById(id);
@@ -584,7 +584,7 @@ function releaseShot() {
   dir.y += 0.02 + 0.04 * c; dir.normalize();
   const sup = c >= 0.99;
   const strafe = (keys.KeyD ? 1 : 0) - (keys.KeyA ? 1 : 0);
-  kick(human, dir, 14 + 36 * c + (sup ? 14 : 0), strafe * c * 18, sup);
+  kick(human, dir, 18 + 32 * c + (sup ? 14 : 0), strafe * c * 18, sup);
 }
 
 function humanPass() {
