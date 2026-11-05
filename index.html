@@ -320,7 +320,7 @@ function ballTexture() {
 }
 const ball = {
   pos: new V(0, BR, 0), vel: new V(), spin: new V(), owner: null, last: null,
-  super: 0, ignore: null, ignoreT: 0,
+  super: 0, ignore: null, ignoreT: 0, kickT: 0,
   mesh: new THREE.Mesh(new THREE.SphereGeometry(BR, 24, 16), new THREE.MeshStandardMaterial({ map: ballTexture(), roughness: .4, emissive: 0x000000 })),
 };
 ball.mesh.castShadow = true; scene.add(ball.mesh);
@@ -338,7 +338,7 @@ function kick(g, dir, speed, curve, sup) {
   ball.pos.set(g.pos.x + f.x * 0.9, Math.max(BR, ball.pos.y), g.pos.z + f.z * 0.9);
   ball.vel.copy(dir).normalize().multiplyScalar(speed);
   ball.spin.copy(rightOf(yawTo(f.x, f.z))).multiplyScalar(curve || 0);
-  ball.super = sup ? 1 : 0; ball.last = g; g.kickCd = 0.3;
+  ball.super = sup ? 1 : 0; ball.last = g; g.kickCd = 0.3; ball.kickT = clockT;
   ball.ignore = null;
   sfx.kick(Math.min(1, speed / 30), sup);
   if (sup) { shake = 0.5; fovKick = 14; fx.burst(ball.pos, 0xf0abfc, 30); }
@@ -672,6 +672,216 @@ document.addEventListener('pointerlockchange', () => {
     $('overlay').classList.add('hidden');
   }
 });
+
+// ================= audio (all synthesized) =================
+let AC = null, noiseBuf = null, crowdGain = null;
+function ac() {
+  if (!AC) {
+    AC = new (window.AudioContext || window.webkitAudioContext)();
+    noiseBuf = AC.createBuffer(1, AC.sampleRate * 2, AC.sampleRate);
+    const d = noiseBuf.getChannelData(0);
+    for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1;
+  }
+  return AC;
+}
+function env(node, t, peak, attack, decay) {
+  node.gain.setValueAtTime(0.0001, t);
+  node.gain.exponentialRampToValueAtTime(peak, t + attack);
+  node.gain.exponentialRampToValueAtTime(0.0001, t + attack + decay);
+}
+function tone(type, f0, f1, peak, dur, delay) {
+  const a = ac(), t = a.currentTime + (delay || 0), o = a.createOscillator(), g = a.createGain();
+  o.type = type; o.frequency.setValueAtTime(f0, t); o.frequency.exponentialRampToValueAtTime(f1, t + dur);
+  env(g, t, peak, 0.005, dur); o.connect(g).connect(a.destination); o.start(t); o.stop(t + dur + 0.05);
+}
+function noise(freq, q, peak, attack, decay, type) {
+  const a = ac(), t = a.currentTime, s = a.createBufferSource(), f = a.createBiquadFilter(), g = a.createGain();
+  s.buffer = noiseBuf; s.loop = true; f.type = type || 'bandpass'; f.frequency.value = freq; f.Q.value = q;
+  env(g, t, peak, attack, decay); s.connect(f).connect(g).connect(a.destination); s.start(t); s.stop(t + attack + decay + 0.05);
+}
+Object.assign(sfx, {
+  start() {
+    const a = ac(); a.resume();
+    if (crowdGain) return;
+    const s = a.createBufferSource(), f = a.createBiquadFilter();
+    crowdGain = a.createGain(); crowdGain.gain.value = 0.04;
+    s.buffer = noiseBuf; s.loop = true; f.type = 'bandpass'; f.frequency.value = 700; f.Q.value = 0.6;
+    s.connect(f).connect(crowdGain).connect(a.destination); s.start();
+  },
+  kick(p, sup) {
+    tone('sine', 150, 45, 0.5 + p * 0.4, 0.15);
+    noise(2500, 1, 0.15 + p * 0.2, 0.002, 0.05);
+    if (sup) { tone('sawtooth', 300, 1200, 0.12, 0.35); tone('square', 80, 30, 0.2, 0.5); }
+  },
+  bounce(p) { if (p > 0.15) tone('sine', 110, 60, 0.15 * p, 0.08); },
+  post() { tone('triangle', 950, 900, 0.3, 0.6); tone('triangle', 1420, 1400, 0.2, 0.5); },
+  tackle() { noise(400, 0.8, 0.3, 0.005, 0.15); tone('sine', 90, 50, 0.3, 0.12); },
+  whistle(long) {
+    const a = ac(), t = a.currentTime, n = long ? 3 : 1;
+    for (let i = 0; i < n; i++) {
+      const o = a.createOscillator(), lfo = a.createOscillator(), lg = a.createGain(), g = a.createGain(), st = t + i * 0.45;
+      o.frequency.value = 2300; lfo.frequency.value = 28; lg.gain.value = 90;
+      lfo.connect(lg).connect(o.frequency);
+      env(g, st, 0.12, 0.01, long ? 0.38 : 0.35);
+      o.connect(g).connect(a.destination); o.start(st); lfo.start(st); o.stop(st + 0.45); lfo.stop(st + 0.45);
+    }
+  },
+  cheer(p) {
+    noise(900, 0.5, 0.5 * p, 0.25, 3.2);
+    noise(2200, 0.7, 0.18 * p, 0.3, 2.5);
+    if (crowdGain) { const t = AC.currentTime; crowdGain.gain.setTargetAtTime(0.12, t, 0.1); crowdGain.gain.setTargetAtTime(0.04, t + 3, 1); }
+  },
+});
+
+// ================= particles =================
+const parts = [];
+const partGeo = new THREE.BoxGeometry(1, 1, 1);
+function spawn(pos, vel, color, size, life, grav, spin) {
+  const m = new THREE.Mesh(partGeo, new THREE.MeshBasicMaterial({ color, transparent: true }));
+  m.position.copy(pos); m.scale.setScalar(size); scene.add(m);
+  parts.push({ m, vel, life, max: life, grav, spin: spin || 0, size });
+}
+Object.assign(fx, {
+  update(dt) {
+    for (let i = parts.length - 1; i >= 0; i--) {
+      const p = parts[i];
+      p.life -= dt;
+      if (p.life <= 0) { scene.remove(p.m); p.m.material.dispose(); parts.splice(i, 1); continue; }
+      p.vel.y -= p.grav * dt; p.vel.multiplyScalar(Math.exp(-0.8 * dt));
+      p.m.position.addScaledVector(p.vel, dt);
+      p.m.rotation.x += p.spin * dt; p.m.rotation.z += p.spin * dt * 0.7;
+      const k = p.life / p.max;
+      p.m.material.opacity = Math.min(1, k * 2);
+      if (!p.spin) p.m.scale.setScalar(p.size * k);
+    }
+  },
+  burst(pos, color, n) {
+    for (let i = 0; i < n; i++)
+      spawn(pos, new V(Math.random() - .5, Math.random() - .3, Math.random() - .5).multiplyScalar(10), color, 0.15, 0.6, 5);
+  },
+  superTrail(pos) {
+    spawn(pos.clone().add(new V((Math.random() - .5) * .3, (Math.random() - .5) * .3, (Math.random() - .5) * .3)),
+      new V(0, 0.5, 0), Math.random() < 0.5 ? 0xf0abfc : 0xa855f7, 0.35, 0.45, 0);
+  },
+  goal(s) {
+    const cols = [0xfacc15, 0xffffff, s > 0 ? 0x3b82f6 : 0xef4444, 0xec4899, 0x22c55e];
+    for (let i = 0; i < 260; i++) {
+      const p = new V(s * (W + 1), 3 + Math.random() * 2, (Math.random() - .5) * 8);
+      const v = new V(-s * (4 + Math.random() * 10), 6 + Math.random() * 10, (Math.random() - .5) * 14);
+      spawn(p, v, cols[i % cols.length], 0.18, 3 + Math.random() * 2, 6, 6 + Math.random() * 6);
+    }
+  },
+});
+
+// ================= AI =================
+function steer(g, tx, tz, speed, stop) {
+  const dx = tx - g.pos.x, dz = tz - g.pos.z, d = Math.hypot(dx, dz);
+  if (d < (stop || 0.01)) { g.wish.set(0, 0, 0); return; }
+  const s = speed * Math.min(1, d / 1.5);
+  g.wish.set(dx / d * s, 0, dz / d * s);
+}
+function turnTo(g, dx, dz, dt) {
+  if (dx * dx + dz * dz < 1e-4) return;
+  let d = yawTo(dx, dz) - g.yaw; d = Math.atan2(Math.sin(d), Math.cos(d));
+  g.yaw += d * Math.min(1, dt * 8);
+}
+function teamChaser(team) {
+  let best = null, bd = 1e9;
+  for (const g of guys) if (g.team === team && g.role !== 'gk' && g.stun <= 0) {
+    const d = hdist(g.pos, ball.pos) - (g.human ? 2 : 0); // bots leave loose balls near you to you
+    if (d < bd) { bd = d; best = g; }
+  }
+  return best;
+}
+function bestMate(b) {
+  let best = null, bs = -1e9;
+  for (const m of guys) {
+    if (m === b || m.team !== b.team || m.role === 'gk' || m.stun > 0) continue;
+    let open = 1e9;
+    for (const o of guys) if (o.team !== b.team) open = Math.min(open, hdist(o.pos, m.pos));
+    const s = (m.pos.x - b.pos.x) * b.dir * 0.3 + Math.min(open, 6) - hdist(m.pos, b.pos) * 0.05 + (m.human ? 1.5 : 0);
+    if (s > bs) { bs = s; best = m; }
+  }
+  return best;
+}
+function botPass(b, m) {
+  const t = m.pos.clone().addScaledVector(m.vel, 0.5);
+  b.yaw = yawTo(t.x - b.pos.x, t.z - b.pos.z);
+  passTo(b, t);
+}
+function botShoot(b) {
+  const aim = new V(b.dir * (W + 1), 0.4 + Math.random() * 1.9, (Math.random() * 2 - 1) * (GW - 0.7));
+  const d = aim.sub(ball.pos), dist = d.length();
+  const speed = 19 + Math.random() * 9, t = dist / speed;
+  d.normalize(); d.y += 0.5 * GRAV * t * t / dist;
+  b.yaw = yawTo(d.x, d.z);
+  kick(b, d, speed, (Math.random() - .5) * 8, false);
+}
+
+function fieldThink(b, dt) {
+  const goalX = b.dir * W, carrier = ball.owner;
+  if (carrier === b) {
+    b.hold += dt;
+    let tz = b.pos.z * 0.6, threat = null, td = 1e9;
+    for (const o of guys) if (o.team !== b.team && o.role !== 'gk') {
+      const d = hdist(o.pos, b.pos);
+      if ((o.pos.x - b.pos.x) * b.dir > -0.5 && d < td) { td = d; threat = o; }
+    }
+    if (threat && td < 4) tz = b.pos.z + (b.pos.z > threat.pos.z ? 5 : -5);
+    steer(b, goalX, THREE.MathUtils.clamp(tz, -H + 2, H - 2), 7.5);
+    turnTo(b, b.wish.x, b.wish.z, dt);
+    if ((b.think -= dt) <= 0 && b.hold > 0.35) {
+      b.think = 0.25;
+      const dGoal = Math.hypot(goalX - b.pos.x, b.pos.z);
+      if (dGoal < 18 && Math.random() < 0.5) return botShoot(b);
+      const m = (threat && td < 2.6 && Math.random() < 0.45) || (b.hold > 3.5 && Math.random() < 0.3) ? bestMate(b) : null;
+      if (m) return botPass(b, m);
+    }
+    return;
+  }
+  b.hold = 0;
+  const attacking = carrier && carrier.team === b.team;
+  if (!attacking && teamChaser(b.team) === b) {
+    const lead = carrier ? 0.15 : 0.35;
+    steer(b, ball.pos.x + ball.vel.x * lead, ball.pos.z + ball.vel.z * lead, b.team === 1 ? 10 : 9.5);
+    return;
+  }
+  // support / shape
+  let tx = attacking ? ball.pos.x + b.dir * 7 : b.home.x * 0.35 + ball.pos.x * 0.65 - b.dir * 5;
+  tx = THREE.MathUtils.clamp(tx, -W + 4, W - 4);
+  steer(b, tx, b.home.z * 0.8 + ball.pos.z * 0.3, 7, 1);
+}
+
+function gkThink(b, dt) {
+  const gx = -b.dir * W, lineX = gx + b.dir * 1.2;
+  if (ball.owner === b) {
+    b.wish.set(0, 0, 0);
+    if ((b.hold += dt) > 0.9) {
+      b.hold = 0;
+      const m = bestMate(b);
+      if (m && Math.random() < 0.6) botPass(b, m);
+      else { const d = new V(b.dir, 0.55, (Math.random() - .5) * 0.8).normalize(); b.yaw = yawTo(d.x, d.z); kick(b, d, 21, 0, false); }
+    }
+    return;
+  }
+  b.hold = 0;
+  let tx = lineX, tz = THREE.MathUtils.clamp(ball.pos.z * 0.4, -GW + 0.8, GW - 0.8), speed = 6;
+  const incoming = !ball.owner && ball.vel.x * -b.dir > 4 && clockT - ball.kickT > 0.18; // small reaction delay
+  if (incoming) {
+    const t = (lineX - ball.pos.x) / ball.vel.x;
+    if (t > 0 && t < 1.5) { tz = THREE.MathUtils.clamp(ball.pos.z + ball.vel.z * t, -GW - 0.3, GW + 0.3); speed = t < 0.5 ? 12 : 9; }
+  }
+  const inBox = Math.abs(ball.pos.x - gx) < 9 && Math.abs(ball.pos.z) < 10;
+  if (!incoming && inBox && (!ball.owner || ball.owner.team !== b.team) && ball.vel.length() < 10) {
+    tx = ball.pos.x; tz = ball.pos.z; speed = 8.5;
+  }
+  steer(b, tx, tz, speed, 0.15);
+}
+
+botThink = (b, dt) => {
+  if (b.stun > 0) { b.wish.set(0, 0, 0); return; }
+  if (b.role === 'gk') gkThink(b, dt); else fieldThink(b, dt);
+};
 
 // ================= HUD =================
 const mm = $('minimap').getContext('2d');
