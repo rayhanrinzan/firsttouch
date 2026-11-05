@@ -91,7 +91,10 @@
 // ================= constants =================
 const V = THREE.Vector3;
 const W = 30, H = 20;            // pitch half-length (x) / half-width (z)
-const GW = 5, GH = 3.4, GD = 2.4; // goal half-width, height, depth
+const GD = 2.4; // goal depth
+// goal size per end (side = sign of x): yours (left, x<0) is bigger, theirs (right) is smaller
+const gw = side => side < 0 ? 5.8 : 4.3;   // half-width
+const gh = side => side < 0 ? 3.8 : 3.0;   // height
 const BR = 0.42, GRAV = 12;      // ball radius, ball gravity (very floaty on purpose)
 const MATCH_TIME = 180;
 const $ = id => document.getElementById(id);
@@ -175,7 +178,7 @@ function boardTexture() {
   };
   board(2 * W + 1.2, 0, H + 0.6, 0); board(2 * W + 1.2, 0, -H - 0.6, 0);
   for (const s of [-1, 1]) for (const zs of [-1, 1])
-    board(H - GW, s * (W + GD + 0.8), zs * (GW + (H - GW) / 2), Math.PI / 2);
+    board(H - gw(s), s * (W + GD + 0.8), zs * (gw(s) + (H - gw(s)) / 2), Math.PI / 2);
 }
 
 // stands + crowd
@@ -228,6 +231,7 @@ function netTexture() {
 }
 const goalGroups = [];
 function makeGoal(s) {
+  const GW = gw(s), GH = gh(s);
   const grp = new THREE.Group(), white = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: .3 });
   const bar = (len, x, y, z, rx, rz) => {
     const m = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.12, len, 10), white);
@@ -371,7 +375,7 @@ function take(g) {
 }
 
 function botHeaderDir(g) {
-  const goalX = g.dir * W, dGoal = Math.hypot(goalX - g.pos.x, g.pos.z);
+  const goalX = g.dir * W, dGoal = Math.hypot(goalX - g.pos.x, g.pos.z), GW = gw(g.dir);
   if (dGoal < 17) {
     const aim = new V(goalX, 0.8 + Math.random(), (Math.random() * 2 - 1) * (GW - 0.8));
     return aim.sub(ball.pos).normalize();
@@ -458,7 +462,7 @@ function collideArena() {
   const p = ball.pos, v = ball.vel;
   // side walls
   if (Math.abs(p.z) > H - BR + 0.6) { p.z = Math.sign(p.z) * (H - BR + 0.6); v.z = -v.z * 0.75; sfx.bounce(0.5); }
-  const s = Math.sign(p.x) || 1, ax = Math.abs(p.x);
+  const s = Math.sign(p.x) || 1, ax = Math.abs(p.x), GW = gw(s), GH = gh(s);
   const inMouthZ = Math.abs(p.z) < GW - BR, underBar = p.y < GH - BR;
   if (ax > W - BR) {
     if (ax < W + 0.2 && !(inMouthZ && underBar)) {
@@ -475,6 +479,7 @@ function collideArena() {
   }
   // posts and crossbar
   for (const gx of [-W, W]) {
+    const GW = gw(gx), GH = gh(gx);
     for (const pz of [-GW, GW]) {
       const dx = p.x - gx, dz = p.z - pz, d = Math.hypot(dx, dz);
       if (d < BR + 0.12 && p.y < GH + 0.12) {
@@ -623,7 +628,10 @@ function updateHuman(dt) {
   // strafing (A/D) is extra quick
   me.wish.copy(f).multiplyScalar(wish.dot(f) * speed).addScaledVector(r, wish.dot(r) * speed * 1.5);
 
-  if (charging) charge = Math.min(1, charge + dt / timeScale / 0.85);
+  if (charging) {
+    charge = Math.min(1, charge + dt / timeScale / 0.85);
+    if (charge >= 1 && canStrike(me)) releaseShot(); // no time to line up a super shot: it goes when the bar fills
+  }
   if (me.pos.y <= 0.001 && me.vy <= 0) { me.jumps = 0; me.dashed = false; }
   if (wantDash && me.pos.y > 0.15 && !me.dashed && me.slide <= 0) {
     // one quick air dash per jump, toward where you're facing
@@ -687,7 +695,7 @@ function moveGuys(dt) {
     g.pos.x = THREE.MathUtils.clamp(g.pos.x, -W - 1.5, W + 1.5);
     g.pos.z = THREE.MathUtils.clamp(g.pos.z, -H + 0.5, H + 0.5);
     // keep people out of the goals
-    if (Math.abs(g.pos.x) > W && Math.abs(g.pos.z) < GW + 0.5) g.pos.x = Math.sign(g.pos.x) * W;
+    if (Math.abs(g.pos.x) > W && Math.abs(g.pos.z) < gw(g.pos.x) + 0.5) g.pos.x = Math.sign(g.pos.x) * W;
   }
   // soft separation
   for (let i = 0; i < guys.length; i++) for (let j = i + 1; j < guys.length; j++) {
@@ -921,12 +929,20 @@ function botPass(b, m) {
   passTo(b, t);
 }
 function botShoot(b) {
-  const aim = new V(b.dir * (W + 1), 0.4 + Math.random() * 1.9, (Math.random() * 2 - 1) * (GW - 0.7));
+  const GW = gw(b.dir), GH = gh(b.dir), sharp = b.team === 1;
+  let z = (Math.random() * 2 - 1) * (GW - 0.7), y = 0.4 + Math.random() * 1.9;
+  if (sharp) {
+    // opponents pick the corner away from your keeper and pick their height
+    const keeper = guys.find(g => g.role === 'gk' && g.team !== b.team);
+    z = (keeper && keeper.pos.z > 0 ? -1 : 1) * (GW - 0.8 - Math.random() * 1.2);
+    y = 0.5 + Math.random() * (GH - 1.3);
+  }
+  const aim = new V(b.dir * (W + 1), y, z);
   const d = aim.sub(ball.pos), dist = d.length();
-  const speed = 19 + Math.random() * 9, t = dist / speed;
+  const speed = sharp ? 25 + Math.random() * 8 : 19 + Math.random() * 9, t = dist / speed;
   d.normalize(); d.y += 0.5 * GRAV * t * t / dist;
   b.yaw = yawTo(d.x, d.z);
-  kick(b, d, speed, (Math.random() - .5) * 8, false);
+  kick(b, d, speed, sharp ? 0 : (Math.random() - .5) * 8, false);
 }
 
 function fieldThink(b, dt) {
@@ -945,8 +961,9 @@ function fieldThink(b, dt) {
       b.think = 0.25;
       const dGoal = Math.hypot(goalX - b.pos.x, b.pos.z);
       // chip over the keeper
-      if (dGoal < 20 && Math.random() < 0.2) return lob(b, goalX * 1.02, GH - 0.7, (Math.random() * 2 - 1) * (GW - 1), 0.9 + dGoal * 0.02);
-      if (dGoal < 18 && Math.random() < 0.4) return botShoot(b);
+      if (dGoal < 20 && Math.random() < 0.2) return lob(b, goalX * 1.02, gh(b.dir) - 0.7, (Math.random() * 2 - 1) * (gw(b.dir) - 1), 0.9 + dGoal * 0.02);
+      const sharp = b.team === 1; // opponents shoot from further out and more often
+      if (dGoal < (sharp ? 23 : 18) && Math.random() < (sharp ? 0.65 : 0.4)) return botShoot(b);
       // from out wide, whip a cross into the box for a header
       if (Math.abs(b.pos.z) > 7 && (goalX - b.pos.x) * b.dir < 15 && Math.random() < 0.6) {
         let tgt = null, best = 1e9;
@@ -991,6 +1008,7 @@ function gkThink(b, dt) {
     return;
   }
   b.hold = 0;
+  const GW = gw(-b.dir);
   let tx = lineX, tz = THREE.MathUtils.clamp(ball.pos.z * 0.4, -GW + 0.8, GW - 0.8), speed = 6;
   const incoming = !ball.owner && ball.vel.x * -b.dir > 4 && clockT - ball.kickT > 0.18; // small reaction delay
   if (incoming) {
@@ -1031,7 +1049,7 @@ function drawHud() {
   mm.strokeRect(ox - W * k, oz - H * k, 2 * W * k, 2 * H * k);
   mm.beginPath(); mm.moveTo(ox, oz - H * k); mm.lineTo(ox, oz + H * k); mm.stroke();
   mm.fillStyle = '#ffffffaa';
-  mm.fillRect(ox - W * k - 4, oz - GW * k, 4, 2 * GW * k); mm.fillRect(ox + W * k, oz - GW * k, 4, 2 * GW * k);
+  mm.fillRect(ox - W * k - 4, oz - gw(-1) * k, 4, 2 * gw(-1) * k); mm.fillRect(ox + W * k, oz - gw(1) * k, 4, 2 * gw(1) * k);
   for (const g of guys) {
     mm.fillStyle = g.human ? '#facc15' : g.team === 0 ? '#60a5fa' : '#f87171';
     mm.beginPath(); mm.arc(ox + g.pos.x * k, oz + g.pos.z * k, g.human ? 4 : 3, 0, Math.PI * 2); mm.fill();
