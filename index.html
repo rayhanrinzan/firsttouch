@@ -346,7 +346,7 @@ function kick(g, dir, speed, curve, sup) {
   ball.vel.copy(dir).normalize().multiplyScalar(speed);
   ball.spin.copy(rightOf(yawTo(f.x, f.z))).multiplyScalar(curve || 0);
   ball.super = sup ? 1 : 0; ball.last = g; g.kickCd = 0.3; ball.kickT = clockT;
-  ball.ignore = null; ball.header = false;
+  ball.ignore = null; ball.header = false; human.pullT = 0;
   sfx.kick(Math.min(1, speed / 30), sup);
   if (sup) { shake = 0.5; fovKick = 14; fx.burst(ball.pos, 0xf0abfc, 30); }
 }
@@ -367,7 +367,7 @@ function passTo(from, target) {
 }
 
 function take(g) {
-  ball.owner = g; ball.last = g; ball.super = 0; ball.spin.set(0, 0, 0); ball.header = false;
+  ball.owner = g; ball.last = g; ball.super = 0; ball.spin.set(0, 0, 0); ball.header = false; human.pullT = 0;
 }
 
 function botHeaderDir(g) {
