@@ -427,7 +427,7 @@ function updateBall(dt) {
   } else {
     ball.vel.y -= GRAV * dt;
     ball.vel.addScaledVector(ball.spin, dt);
-    ball.spin.multiplyScalar(Math.exp(-1.3 * dt));
+    ball.spin.multiplyScalar(Math.exp(-1.0 * dt));
     ball.vel.multiplyScalar(Math.exp(-0.08 * dt));
     // a high ball near you is gently pulled toward your head (not right after your own touch)
     const me = human;
@@ -551,7 +551,13 @@ function possession(dt) {
     }
     if (ball.ignore === g) continue;
     if (ball.super && bs > 12) {
-      // super shots bulldoze anyone in their way
+      if (gk) {
+        // a keeper in the way can stop it, but it knocks them flat
+        ball.super = 0; gkClear(g, bs); knockDown(g, 0.9);
+        shake = Math.max(shake, 0.4); fx.burst(g.pos.clone().setY(1.4), 0xf0abfc, 24); toast('SUPER SAVE!');
+        continue;
+      }
+      // super shots bulldoze field players in their way
       knockDown(g, 1.6); shake = Math.max(shake, 0.35); fx.burst(g.pos.clone().setY(1.2), 0xf0abfc, 20);
       ball.vel.multiplyScalar(0.85); ball.ignore = g; ball.ignoreT = 0.4;
       continue;
@@ -607,7 +613,7 @@ function releaseShot() {
   dir.y += 0.02 + 0.04 * c; dir.normalize();
   const sup = c >= 0.99;
   const strafe = (keys.KeyD ? 1 : 0) - (keys.KeyA ? 1 : 0);
-  kick(human, dir, 18 + 32 * c + (sup ? 14 : 0), strafe * (22 + 34 * c), sup);
+  kick(human, dir, 18 + 32 * c + (sup ? 14 : 0), strafe * (36 + 52 * c), sup);
   if (strafe) ball.curveT = 0.75; // game-seconds of slow-mo while it bends
 }
 
@@ -658,7 +664,7 @@ function updateHuman(dt) {
   }
   wantDash = false;
   if (wantJump && (me.jumps || 0) < 2) {
-    me.vy = me.jumps ? 10.5 : 9; me.jumps = (me.jumps || 0) + 1;
+    me.vy = me.jumps ? 12 : 11; me.jumps = (me.jumps || 0) + 1;
     if (me.jumps === 2) {
       fx.burst(me.pos.clone(), 0xffffff, 12); sfx.bounce(0.5);
       // double jump calls a loose, nearby ball to you if nobody else is closer to it
