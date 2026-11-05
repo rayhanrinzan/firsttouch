@@ -76,7 +76,7 @@
       <b>Shift</b><span>Sprint, tap it mid-air to dash forward</span>
       <b>Space</b><span>Jump, press again mid-air to double jump</span>
       <b>Hold / release left click</b><span>Charge and shoot where you look. Full charge = SUPER SHOT</span>
-      <b>A / D while shooting</b><span>Bend it like a banana</span>
+      <b>A / D while charging</b><span>Bend it: you stop strafing and the shot curves hard (in slow-mo)</span>
       <b>Right click</b><span>Pass to the teammate you're facing</span>
       <b>E</b><span>Slide tackle (mid-air = flying dive)</span>
       <b>F</b><span>Flick the ball up, then jump (Space) and head it</span>
@@ -350,7 +350,7 @@ function kick(g, dir, speed, curve, sup) {
   ball.vel.copy(dir).normalize().multiplyScalar(speed);
   ball.spin.copy(rightOf(yawTo(f.x, f.z))).multiplyScalar(curve || 0);
   ball.super = sup ? 1 : 0; ball.last = g; g.kickCd = 0.3; ball.kickT = clockT;
-  ball.ignore = null; ball.header = false; human.pullT = 0;
+  ball.ignore = null; ball.header = false; human.pullT = 0; ball.curveT = 0;
   sfx.kick(Math.min(1, speed / 30), sup);
   if (sup) { shake = 0.5; fovKick = 14; fx.burst(ball.pos, 0xf0abfc, 30); }
 }
@@ -449,6 +449,7 @@ function updateBall(dt) {
     }
     if (ball.pos.y > 16) { ball.pos.y = 16; ball.vel.y = -Math.abs(ball.vel.y) * 0.5; }
     if (ball.super) { fx.superTrail(ball.pos); if (ball.vel.length() < 12) ball.super = 0; }
+    else if (ball.curveT > 0) fx.curveTrail(ball.pos);
   }
   collideArena();
   // rolling
@@ -458,16 +459,27 @@ function updateBall(dt) {
   ball.mesh.material.emissive.setHex(ball.super ? 0xc026d3 : 0x000000);
 }
 
+// any wall/post/net contact: a super shot loses its power and glow, and the bend stops
+function wallHit() {
+  ball.spin.set(0, 0, 0); ball.curveT = 0;
+  if (ball.super) {
+    ball.super = 0;
+    const sp = ball.vel.length();
+    if (sp > 18) ball.vel.multiplyScalar(18 / sp);
+    fx.burst(ball.pos.clone(), 0xf0abfc, 16);
+  }
+}
+
 function collideArena() {
   const p = ball.pos, v = ball.vel;
   // side walls
-  if (Math.abs(p.z) > H - BR + 0.6) { p.z = Math.sign(p.z) * (H - BR + 0.6); v.z = -v.z * 0.75; sfx.bounce(0.5); }
+  if (Math.abs(p.z) > H - BR + 0.6) { p.z = Math.sign(p.z) * (H - BR + 0.6); v.z = -v.z * 0.75; sfx.bounce(0.5); wallHit(); }
   const s = Math.sign(p.x) || 1, ax = Math.abs(p.x), GW = gw(s), GH = gh(s);
   const inMouthZ = Math.abs(p.z) < GW - BR, underBar = p.y < GH - BR;
   if (ax > W - BR) {
     if (ax < W + 0.2 && !(inMouthZ && underBar)) {
       // end wall (outside the goal mouth) — arena style, ball bounces back
-      if (!(Math.abs(p.z) < GW + BR && underBar)) { p.x = s * (W - BR); v.x = -v.x * 0.75; sfx.bounce(0.5); }
+      if (!(Math.abs(p.z) < GW + BR && underBar)) { p.x = s * (W - BR); v.x = -v.x * 0.75; sfx.bounce(0.5); wallHit(); }
     }
     if (ax > W) {
       // inside the goal: net box
@@ -486,6 +498,7 @@ function collideArena() {
         const n = new V(dx / d, 0, dz / d);
         p.x = gx + n.x * (BR + 0.12); p.z = pz + n.z * (BR + 0.12);
         if (v.length() > 3) sfx.post();
+        wallHit();
         reflectBall(n, 0.8);
       }
     }
@@ -495,6 +508,7 @@ function collideArena() {
         const n = new V(dx / d, dy / d, 0);
         p.x = gx + n.x * (BR + 0.12); p.y = GH + n.y * (BR + 0.12);
         if (v.length() > 3) sfx.post();
+        wallHit();
         reflectBall(n, 0.8);
       }
     }
@@ -556,7 +570,7 @@ function possession(dt) {
 const keys = {};
 let yaw = human.yaw, pitch = -0.12, charging = false, charge = 0, stamina = 1;
 let wantJump = false, wantPass = false, wantTackle = false, wantFlick = false, wantDash = false;
-let slowT = 0, sprintFov = 0;
+let slowT = 0, sprintFov = 0, jumpBallT = 0;
 const locked = () => document.pointerLockElement === renderer.domElement;
 addEventListener('keydown', e => {
   keys[e.code] = true;
@@ -593,7 +607,8 @@ function releaseShot() {
   dir.y += 0.02 + 0.04 * c; dir.normalize();
   const sup = c >= 0.99;
   const strafe = (keys.KeyD ? 1 : 0) - (keys.KeyA ? 1 : 0);
-  kick(human, dir, 18 + 32 * c + (sup ? 14 : 0), strafe * c * 18, sup);
+  kick(human, dir, 18 + 32 * c + (sup ? 14 : 0), strafe * (22 + 34 * c), sup);
+  if (strafe) ball.curveT = 0.75; // game-seconds of slow-mo while it bends
 }
 
 function humanPass() {
@@ -613,7 +628,9 @@ function updateHuman(dt) {
   const me = human;
   me.yaw = yaw;
   const f = fwdOf(yaw), r = rightOf(yaw);
-  const ix = (keys.KeyD ? 1 : 0) - (keys.KeyA ? 1 : 0), iz = (keys.KeyW ? 1 : 0) - (keys.KeyS ? 1 : 0);
+  // while charging a shot with the ball, A/D only set the curve: no strafing so you can aim
+  const aiming = charging && ball.owner === me;
+  const ix = aiming ? 0 : (keys.KeyD ? 1 : 0) - (keys.KeyA ? 1 : 0), iz = (keys.KeyW ? 1 : 0) - (keys.KeyS ? 1 : 0);
   const wish = f.clone().multiplyScalar(iz).addScaledVector(r, ix);
   const moving = wish.lengthSq() > 0;
   if (moving) wish.normalize();
@@ -732,9 +749,10 @@ function kickoff(team) {
   for (const g of guys) {
     g.pos.copy(g.home); g.vel.set(0, 0, 0); g.vy = 0; g.stun = 0; g.slide = 0; g.kickCd = 0;
     g.yaw = yawTo(g.dir, 0);
-    if (g.role === 'fw' && g.team === team) g.pos.set(-g.dir * 1.3, 0, 0);
+    if (g.role === 'fw') g.pos.set(-g.dir * 1.4, 0, 0); // both strikers line up for the jump ball
   }
-  ball.pos.set(0, BR, 0); ball.vel.set(0, 0, 0); ball.spin.set(0, 0, 0);
+  ball.pos.set(0, BR, 0); ball.vel.set(0, 7, 0); ball.spin.set(0, 0, 0); // tossed up to head height
+  ball.curveT = 0; jumpBallT = 0.2;
   ball.owner = null; ball.super = 0; ball.ignore = null;
   yaw = human.yaw; pitch = -0.12;
   timeScale = 1; crowd.hype = 0.1;
@@ -877,6 +895,9 @@ Object.assign(fx, {
   burst(pos, color, n) {
     for (let i = 0; i < n; i++)
       spawn(pos, new V(Math.random() - .5, Math.random() - .3, Math.random() - .5).multiplyScalar(10), color, 0.15, 0.6, 5);
+  },
+  curveTrail(pos) {
+    spawn(pos.clone(), new V(0, 0.3, 0), Math.random() < 0.5 ? 0x7dd3fc : 0xffffff, 0.22, 0.6, 0);
   },
   superTrail(pos) {
     spawn(pos.clone().add(new V((Math.random() - .5) * .3, (Math.random() - .5) * .3, (Math.random() - .5) * .3)),
@@ -1070,8 +1091,11 @@ function frame(now) {
     // bullet time while you're airborne with the ball (until you shoot, land, or ~1.6s passes)
     const slow = slowT > 0 && ball.owner === human && human.pos.y > 0.05;
     if (slow) slowT -= rdt; else slowT = 0;
-    timeScale += ((slow ? 0.22 : 1) - timeScale) * Math.min(1, rdt * 12);
-    document.body.classList.toggle('slowmo', slow);
+    // and while your curved shot is bending
+    if (ball.curveT > 0) ball.curveT -= rdt * timeScale;
+    const curving = ball.curveT > 0 && !ball.owner && ball.last === human && ball.spin.lengthSq() > 4;
+    timeScale += ((slow ? 0.22 : curving ? 0.3 : 1) - timeScale) * Math.min(1, rdt * 12);
+    document.body.classList.toggle('slowmo', slow || curving);
   } else document.body.classList.remove('slowmo');
   const dt = rdt * timeScale;
   const live = state === 'play' || state === 'goal';
@@ -1080,6 +1104,16 @@ function frame(now) {
       updateHuman(dt);
       for (const g of guys) if (!g.human) botThink(g, dt);
       timeLeft -= dt;
+      if (jumpBallT > 0 && (jumpBallT -= dt) <= 0) {
+        // the nearest opponent leaps for the kickoff toss
+        let j = null, jd = 1e9;
+        for (const g of guys) if (g.team === 1 && g.role !== 'gk' && hdist(g.pos, ball.pos) < jd) { jd = hdist(g.pos, ball.pos); j = g; }
+        if (j && j.pos.y <= 0.001) {
+          j.vy = 9.5;
+          const to = new V(ball.pos.x - j.pos.x, 0, ball.pos.z - j.pos.z).normalize();
+          j.vel.copy(to).multiplyScalar(4);
+        }
+      }
       if (timeLeft <= 0) { timeLeft = 0; endMatch(); }
     } else {
       for (const g of guys) g.wish.multiplyScalar(0.9);
