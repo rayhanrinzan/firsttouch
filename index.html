@@ -427,7 +427,11 @@ function updateBall(dt) {
     ball.vel.multiplyScalar(Math.exp(-0.08 * dt));
     // a high ball near you is gently pulled toward your head (not right after your own touch)
     const me = human;
-    if (ball.pos.y > 1.2 && !ball.super && me.stun <= 0 && !(ball.last === me && clockT - ball.kickT < 0.5)) {
+    if (me.pullT > 0) {
+      me.pullT -= dt;
+      const to = new V(me.pos.x, me.pos.y + 1.4, me.pos.z).sub(ball.pos), d = to.length();
+      if (d > 0.5) ball.vel.addScaledVector(to.normalize(), 26 * dt);
+    } else if (ball.pos.y > 1.2 && !ball.super && me.stun <= 0 && !(ball.last === me && clockT - ball.kickT < 0.5)) {
       const to = new V(me.pos.x, me.pos.y + 1.6, me.pos.z).sub(ball.pos), d = to.length();
       if (d < 6 && d > 0.3) ball.vel.addScaledVector(to.normalize(), (me.pos.y > 0.25 ? 30 : 16) * (1 - d / 6) * dt); // stronger while you're airborne
     }
@@ -629,8 +633,17 @@ function updateHuman(dt) {
   }
   wantDash = false;
   if (wantJump && (me.jumps || 0) < 2) {
-    me.vy = me.jumps ? 8.5 : 9; me.jumps = (me.jumps || 0) + 1;
-    if (me.jumps === 2) { fx.burst(me.pos.clone(), 0xffffff, 12); sfx.bounce(0.5); }
+    me.vy = me.jumps ? 10.5 : 9; me.jumps = (me.jumps || 0) + 1;
+    if (me.jumps === 2) {
+      fx.burst(me.pos.clone(), 0xffffff, 12); sfx.bounce(0.5);
+      // double jump calls a loose, nearby ball to you if nobody else is closer to it
+      const myD = hdist(me.pos, ball.pos);
+      if (!ball.owner && myD < 11 && !guys.some(g => g !== me && g.stun <= 0 && hdist(g.pos, ball.pos) < myD)) {
+        me.pullT = 0.9;
+        const to = new V(me.pos.x, me.pos.y + 1.4, me.pos.z).sub(ball.pos).normalize();
+        ball.vel.addScaledVector(to, 4); fx.burst(ball.pos.clone(), 0x93c5fd, 10);
+      }
+    }
   }
   if (wantPass) humanPass();
   if (wantTackle && me.slideCd <= 0) { // works mid-air too: a flying dive
