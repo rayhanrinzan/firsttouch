@@ -34,6 +34,9 @@
   #toast{position:absolute;top:64px;left:50%;transform:translateX(-50%);font-weight:800;font-size:16px;
     background:#0009;padding:6px 14px;border-radius:999px;opacity:0;transition:opacity .2s}
   #toast.show{opacity:1}
+  #vignette{position:absolute;inset:0;opacity:0;transition:opacity .15s;
+    background:radial-gradient(ellipse at center,transparent 45%,rgba(56,189,248,.35) 100%)}
+  body.slowmo #vignette{opacity:1}
   #overlay{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;
     background:radial-gradient(circle at 50% 30%,#1e3a8acc,#0b1020ee);padding:16px}
   #overlay.hidden{display:none}
@@ -55,6 +58,7 @@
   <div id="score"><div class="blue" id="sBlue">0</div><div class="clock" id="clock">3:00</div><div class="red" id="sRed">0</div></div>
   <div id="toast"></div>
   <div id="cross"></div>
+  <div id="vignette"></div>
   <div id="banner">GOAL!</div>
   <div id="bars">
     <div class="lbl">STAMINA</div><div class="bar" id="stam"><div></div></div>
@@ -69,7 +73,7 @@
     <div class="keys">
       <b>WASD</b><span>Move</span>
       <b>Mouse</b><span>Look</span>
-      <b>Shift</b><span>Sprint</span>
+      <b>Shift</b><span>Sprint, tap it mid-air to dash forward</span>
       <b>Space</b><span>Jump, press again mid-air to double jump</span>
       <b>Hold / release left click</b><span>Charge and shoot where you look. Full charge = SUPER SHOT</span>
       <b>A / D while shooting</b><span>Bend it like a banana</span>
@@ -512,7 +516,7 @@ function possession(dt) {
     const d = hdist(g.pos, ball.pos), rel = ball.pos.y - g.pos.y;
     // mid-air you trap the ball instead: it sticks to you until you shoot or land with it
     if (g.human && !ball.owner && g.pos.y > 0.25 && ball.ignore !== g && !(ball.super && bs > 12) && d < 1.6 && rel > -0.8 && rel < 2.8) {
-      take(g); g.immune = Math.max(g.immune, 1.2); sfx.header(); continue;
+      take(g); g.immune = Math.max(g.immune, 1.2); sfx.header(); slowT = 1.6; continue;
     }
     // anything at head height gets headed
     if (!ball.owner && !gk && ball.ignore !== g && !(ball.super && bs > 12) && d < 0.95 && rel > 1.0 && rel < 2.7) { header(g); continue; }
@@ -542,7 +546,8 @@ function possession(dt) {
 // ================= input =================
 const keys = {};
 let yaw = human.yaw, pitch = -0.12, charging = false, charge = 0, stamina = 1;
-let wantJump = false, wantPass = false, wantTackle = false, wantFlick = false;
+let wantJump = false, wantPass = false, wantTackle = false, wantFlick = false, wantDash = false;
+let slowT = 0, sprintFov = 0;
 const locked = () => document.pointerLockElement === renderer.domElement;
 addEventListener('keydown', e => {
   keys[e.code] = true;
@@ -550,6 +555,7 @@ addEventListener('keydown', e => {
   if (e.code === 'KeyE') wantTackle = true;
   if (e.code === 'KeyQ') wantPass = true;
   if (e.code === 'KeyF') wantFlick = true;
+  if ((e.code === 'ShiftLeft' || e.code === 'ShiftRight') && !e.repeat) wantDash = true;
   if (e.code === 'Space' || e.code === 'Tab') e.preventDefault();
 });
 addEventListener('keyup', e => { keys[e.code] = false; });
@@ -603,15 +609,25 @@ function updateHuman(dt) {
   const moving = wish.lengthSq() > 0;
   if (moving) wish.normalize();
   const sprint = keys.ShiftLeft || keys.ShiftRight;
-  const canSprint = sprint && moving && stamina > 0.02;
+  if (stamina <= 0.01) me.tired = true;
+  if (stamina >= 0.3) me.tired = false;   // must recover a bit before sprinting again
+  const canSprint = sprint && moving && !me.tired;
+  me.sprinting = canSprint;
   stamina = THREE.MathUtils.clamp(stamina + (canSprint ? -0.28 : 0.16) * dt, 0, 1);
   let speed = canSprint ? 16.5 : 11;
   if (ball.owner === me) speed *= 0.9;
   // strafing (A/D) is extra quick
   me.wish.copy(f).multiplyScalar(wish.dot(f) * speed).addScaledVector(r, wish.dot(r) * speed * 1.5);
 
-  if (charging) charge = Math.min(1, charge + dt / 0.85);
-  if (me.pos.y <= 0.001 && me.vy <= 0) me.jumps = 0;
+  if (charging) charge = Math.min(1, charge + dt / timeScale / 0.85);
+  if (me.pos.y <= 0.001 && me.vy <= 0) { me.jumps = 0; me.dashed = false; }
+  if (wantDash && me.pos.y > 0.15 && !me.dashed && me.slide <= 0) {
+    // one quick air dash per jump, toward where you're facing
+    me.dashed = true; me.dash = 0.28;
+    me.vel.copy(f).multiplyScalar(22); me.vy = Math.max(me.vy, 2.5);
+    fx.burst(me.pos.clone().setY(me.pos.y + 1), 0x93c5fd, 14); sfx.tackle(); fovKick = Math.max(fovKick, 8);
+  }
+  wantDash = false;
   if (wantJump && (me.jumps || 0) < 2) {
     me.vy = me.jumps ? 8.5 : 9; me.jumps = (me.jumps || 0) + 1;
     if (me.jumps === 2) { fx.burst(me.pos.clone(), 0xffffff, 12); sfx.bounce(0.5); }
@@ -647,6 +663,7 @@ function moveGuys(dt) {
     g.immune = Math.max(0, g.immune - dt);
     if (g.stun > 0) { g.stun -= dt; g.vel.multiplyScalar(Math.exp(-6 * dt)); }
     else if (g.slide > 0) { g.slide -= dt; g.vel.multiplyScalar(Math.exp(-3 * dt)); }
+    else if (g.dash > 0) { g.dash -= dt; }
     else {
       const k = 1 - Math.exp(-(g.human ? 11 : 7) * dt);
       g.vel.x += (g.wish.x - g.vel.x) * k; g.vel.z += (g.wish.z - g.vel.z) * k;
@@ -1018,6 +1035,13 @@ let last = performance.now(), clockT = 0;
 function frame(now) {
   requestAnimationFrame(frame);
   const rdt = Math.min(0.05, (now - last) / 1000); last = now; clockT += rdt;
+  if (state === 'play') {
+    // bullet time while you're airborne with the ball (until you shoot, land, or ~1.6s passes)
+    const slow = slowT > 0 && ball.owner === human && human.pos.y > 0.05;
+    if (slow) slowT -= rdt; else slowT = 0;
+    timeScale += ((slow ? 0.22 : 1) - timeScale) * Math.min(1, rdt * 12);
+    document.body.classList.toggle('slowmo', slow);
+  } else document.body.classList.remove('slowmo');
   const dt = rdt * timeScale;
   const live = state === 'play' || state === 'goal';
   if (live) {
@@ -1055,7 +1079,8 @@ function frame(now) {
   }
   camera.rotation.y = yaw; camera.rotation.x = pitch;
   fovKick *= Math.exp(-4 * rdt);
-  camera.fov = 78 + fovKick + (keys.ShiftLeft && stamina > 0.02 ? 4 : 0);
+  sprintFov += ((human.sprinting ? 5 : 0) - sprintFov) * Math.min(1, rdt * 6);
+  camera.fov = 78 + fovKick + sprintFov;
   camera.updateProjectionMatrix();
   // boot swing
   bootT = Math.min(1, bootT + rdt * 4);
