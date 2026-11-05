@@ -90,7 +90,7 @@
 <script>
 // ================= constants =================
 const V = THREE.Vector3;
-const W = 30, H = 20;            // pitch half-length (x) / half-width (z)
+const W = 25, H = 20;            // pitch half-length (x) / half-width (z)
 const GD = 2.4; // goal depth
 // goal size per end (side = sign of x): yours (left, x<0) is bigger, theirs (right) is smaller
 const gw = side => side < 0 ? 5.8 : 4.3;   // half-width
@@ -135,7 +135,7 @@ function pitchTexture() {
   const X = x => (x + PW / 2) * kx, Z = z => (z + PH / 2) * kz;
   g.fillStyle = '#2f9e44'; g.fillRect(0, 0, c.width, c.height);
   g.fillStyle = '#38b24f';
-  for (let i = 1; i < 12; i += 2) g.fillRect(X(-W + i * 5), Z(-H), 5 * kx, 2 * H * kz);
+  for (let i = 1; i < 2 * W / 5; i += 2) g.fillRect(X(-W + i * 5), Z(-H), 5 * kx, 2 * H * kz);
   g.strokeStyle = '#fff'; g.fillStyle = '#fff'; g.lineWidth = 0.15 * kx;
   g.strokeRect(X(-W), Z(-H), 2 * W * kx, 2 * H * kz);
   g.beginPath(); g.moveTo(X(0), Z(-H)); g.lineTo(X(0), Z(H)); g.stroke();
@@ -448,7 +448,16 @@ function updateBall(dt) {
       ball.spin.multiplyScalar(Math.exp(-3 * dt));
     }
     if (ball.pos.y > 16) { ball.pos.y = 16; ball.vel.y = -Math.abs(ball.vel.y) * 0.5; }
-    if (ball.super) { fx.superTrail(ball.pos); if (ball.vel.length() < 12) ball.super = 0; }
+    if (ball.super) {
+      fx.superTrail(ball.pos); if (ball.vel.length() < 12) ball.super = 0;
+      if (ball.knuckle) {
+        // no spin = knuckleball: it dances sideways and up/down on the way
+        ball.knT += dt;
+        const side = new V(-ball.vel.z, 0, ball.vel.x).normalize();
+        ball.vel.addScaledVector(side, Math.sin(ball.knT * 19 + ball.knP[0]) * 55 * dt);
+        ball.vel.y += Math.sin(ball.knT * 15 + ball.knP[1]) * 28 * dt;
+      }
+    }
     else if (ball.curveT > 0) fx.curveTrail(ball.pos);
   }
   collideArena();
@@ -614,6 +623,8 @@ function releaseShot() {
   const sup = c >= 0.99;
   const strafe = (keys.KeyD ? 1 : 0) - (keys.KeyA ? 1 : 0);
   kick(human, dir, 18 + 32 * c + (sup ? 14 : 0), strafe * (36 + 52 * c), sup);
+  ball.knuckle = sup && !strafe;
+  if (ball.knuckle) { ball.knT = 0; ball.knP = [Math.random() * 6.3, Math.random() * 6.3]; }
   if (strafe) ball.curveT = 0.75; // game-seconds of slow-mo while it bends
 }
 
@@ -755,10 +766,10 @@ function kickoff(team) {
   for (const g of guys) {
     g.pos.copy(g.home); g.vel.set(0, 0, 0); g.vy = 0; g.stun = 0; g.slide = 0; g.kickCd = 0;
     g.yaw = yawTo(g.dir, 0);
-    if (g.role === 'fw') g.pos.set(-g.dir * 1.4, 0, 0); // both strikers line up for the jump ball
+    if (g.role === 'fw') g.pos.set(-g.dir * 3.5, 0, 0); // both strikers line up for the jump ball
   }
   ball.pos.set(0, BR, 0); ball.vel.set(0, 7, 0); ball.spin.set(0, 0, 0); // tossed up to head height
-  ball.curveT = 0; jumpBallT = 0.2;
+  ball.curveT = 0; jumpBallT = 0.5;
   ball.owner = null; ball.super = 0; ball.ignore = null;
   yaw = human.yaw; pitch = -0.12;
   timeScale = 1; crowd.hype = 0.1;
