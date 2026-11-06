@@ -454,7 +454,7 @@ function updateBall(dt) {
     if (ball.super) {
       fx.superTrail(ball.pos); if (ball.vel.length() < 12) ball.super = 0;
       if (ball.knuckle) {
-        // no spin = knuckleball: it dances sideways and up/down on the way
+        // knuckleball: it dances sideways and up/down on the way (on top of any curve)
         ball.knT += dt;
         const side = new V(-ball.vel.z, 0, ball.vel.x).normalize();
         ball.vel.addScaledVector(side, Math.sin(ball.knT * 19 + ball.knP[0]) * 55 * dt);
@@ -635,7 +635,8 @@ function releaseShot() {
   const sup = c >= 0.99;
   const strafe = (keys.KeyD ? 1 : 0) - (keys.KeyA ? 1 : 0);
   kick(human, dir, 18 + 32 * c + (sup ? 14 : 0), strafe * (36 + 52 * c), sup);
-  ball.knuckle = sup && !strafe;
+  ball.knuckle = sup; // every super shot dances in flight, curved ones too
+  if (sup && strafe) ball.spin.multiplyScalar(0.85 + Math.random() * 0.3); // and the bend amount varies
   if (ball.knuckle) { ball.knT = 0; ball.knP = [Math.random() * 6.3, Math.random() * 6.3]; }
   if (strafe) ball.curveT = 0.75; // game-seconds of slow-mo while it bends
 }
