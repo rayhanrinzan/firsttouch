@@ -669,8 +669,10 @@ function releaseShot() {
   dir.y += 0.02 + 0.04 * c; dir.normalize();
   const sup = c >= 0.99;
   const strafe = (keys.KeyD ? 1 : 0) - (keys.KeyA ? 1 : 0);
+  // curl: bends more the closer you are to goal, and a curled super shot bends far more
+  const near = THREE.MathUtils.clamp(2 - Math.hypot(W - human.pos.x, human.pos.z) / 14, 0.7, 2); // ~1.4x at 8m, 0.7x from 20m+
   kick(human, dir, sup ? 64 : 18 + 22 * c, // regular shots top out at 40 m/s; only a super shot is a rocket
-    strafe * (36 + 52 * c), sup);
+    strafe * (36 + 52 * c) * near * (sup ? 4 : 1), sup);
   ball.knuckle = sup; // every super shot dances in flight, curved ones too
   if (sup && strafe) ball.spin.multiplyScalar(0.85 + Math.random() * 0.3); // and the bend amount varies
   if (ball.knuckle) { ball.knT = 0; ball.knP = [Math.random() * 6.3, Math.random() * 6.3]; }
