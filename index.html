@@ -350,7 +350,8 @@ function kick(g, dir, speed, curve, sup) {
   ball.pos.set(g.pos.x + f.x * 0.9, Math.max(BR, ball.pos.y), g.pos.z + f.z * 0.9);
   ball.vel.copy(dir).normalize().multiplyScalar(speed);
   ball.spin.copy(rightOf(yawTo(f.x, f.z))).multiplyScalar(curve || 0);
-  ball.super = sup ? 1 : 0; ball.last = g; g.kickCd = 0.3; ball.kickT = clockT;
+  ball.super = sup ? 1 : 0; ball.last = g; g.kickCd = 0.3; ball.kickT = gameT;
+  ball.shotDist = Math.hypot(g.dir * W - g.pos.x, g.pos.z);
   ball.ignore = null; ball.header = false; human.pullT = 0; ball.curveT = 0;
   sfx.kick(Math.min(1, speed / 30), sup);
   if (sup) { shake = 0.5; fovKick = 14; fx.burst(ball.pos, 0xf0abfc, 30); }
@@ -394,7 +395,8 @@ function header(g) {
   dir.normalize();
   ball.vel.copy(dir).multiplyScalar(Math.min(30, 11 + bs * 0.35 + (air ? 6 : 0)));
   ball.spin.set(0, 0, 0); ball.super = 0; ball.last = g; ball.header = true;
-  ball.ignore = g; ball.ignoreT = 0.3; ball.kickT = clockT; g.kickCd = 0.2;
+  ball.ignore = g; ball.ignoreT = 0.3; ball.kickT = gameT; g.kickCd = 0.2;
+  ball.shotDist = Math.hypot(g.dir * W - g.pos.x, g.pos.z);
   sfx.header(); fx.burst(ball.pos, 0xffffff, 8);
   if (g.human && air) { toast('Flying header!'); shake = Math.max(shake, 0.15); }
 }
@@ -436,7 +438,7 @@ function updateBall(dt) {
       me.pullT -= dt;
       const to = new V(me.pos.x, me.pos.y + 1.4, me.pos.z).sub(ball.pos), d = to.length();
       if (d > 0.5) ball.vel.addScaledVector(to.normalize(), 26 * dt);
-    } else if (ball.pos.y > 1.2 && !ball.super && me.stun <= 0 && !(ball.last === me && clockT - ball.kickT < 0.5)) {
+    } else if (ball.pos.y > 1.2 && !ball.super && me.stun <= 0 && !(ball.last === me && gameT - ball.kickT < 0.5)) {
       const to = new V(me.pos.x, me.pos.y + 1.6, me.pos.z).sub(ball.pos), d = to.length();
       if (d < 6 && d > 0.3) ball.vel.addScaledVector(to.normalize(), (me.pos.y > 0.25 ? 30 : 16) * (1 - d / 6) * dt); // stronger while you're airborne
     }
@@ -541,6 +543,13 @@ function gkClear(g, bs) {
   if (bs > 20) toast('What a save!');
 }
 
+// their keeper covers more of the goal the closer you shoot from (0..1) — curlers don't count
+const isCurling = () => ball.spin.lengthSq() > 16;
+function keeperBoost(g) {
+  if (g.team !== 1 || !ball.last || ball.last.team !== 0 || isCurling()) return 0;
+  return THREE.MathUtils.clamp((14 - (ball.shotDist || 99)) / 12, 0, 1);
+}
+
 function possession(dt) {
   const bs = ball.vel.length();
   for (const g of guys) {
@@ -553,7 +562,8 @@ function possession(dt) {
     }
     // anything at head height gets headed
     if (!ball.owner && !gk && ball.ignore !== g && !(ball.super && bs > 12) && d < 0.95 && rel > 1.0 && rel < 2.7) { header(g); continue; }
-    if (d > (gk ? 1.4 : 1.05) || rel > (gk ? 2.7 : 1.0) || rel < -0.5) continue;
+    const boost = gk ? keeperBoost(g) : 0;
+    if (d > (gk ? 1.4 + 1.3 * boost : 1.05) || rel > (gk ? 2.7 + 0.8 * boost : 1.0) || rel < -0.5) continue;
     if (ball.owner) {
       if (ball.owner.team === g.team || ball.owner.immune > 0) continue;
       if (Math.random() < dt * (g.human ? 3 : 1.3)) { ball.owner.kickCd = 0.8; take(g); sfx.tackle(); if (gk) gkClear(g, bs); }
@@ -752,6 +762,10 @@ function moveGuys(dt) {
     const swing = Math.sin(g.runPhase) * Math.min(1, sp / 8) * 0.8;
     g.m.legs[0].rotation.x = swing; g.m.legs[1].rotation.x = -swing;
     g.m.g.position.copy(g.pos); g.m.g.rotation.y = g.yaw;
+    if (g.role === 'gk' && g.team === 1) {
+      const near = THREE.MathUtils.clamp((14 - Math.hypot(W - human.pos.x, human.pos.z)) / 12, 0, 1);
+      g.m.g.scale.setScalar(1 + 0.3 * near);
+    }
     const down = g.stun > 0 ? -Math.PI / 2 : (g.slide > 0 ? -Math.PI / 3 : 0);
     g.m.inner.rotation.x += (down - g.m.inner.rotation.x) * Math.min(1, dt * 12);
     g.m.inner.position.y = g.stun > 0 ? 0.35 : 0;
@@ -1050,10 +1064,12 @@ function gkThink(b, dt) {
   b.hold = 0;
   const GW = gw(-b.dir);
   let tx = lineX, tz = THREE.MathUtils.clamp(ball.pos.z * 0.4, -GW + 0.8, GW - 0.8), speed = 6;
-  const incoming = !ball.owner && ball.vel.x * -b.dir > 4 && clockT - ball.kickT > 0.18; // small reaction delay
+  // small reaction delay; their keeper is slow to read a curling shot
+  const fooled = b.team === 1 && isCurling();
+  const incoming = !ball.owner && ball.vel.x * -b.dir > 4 && gameT - ball.kickT > (fooled ? 0.4 : 0.18);
   if (incoming) {
     const t = (lineX - ball.pos.x) / ball.vel.x;
-    if (t > 0 && t < 1.5) { tz = THREE.MathUtils.clamp(ball.pos.z + ball.vel.z * t, -GW - 0.3, GW + 0.3); speed = t < 0.5 ? 12 : 9; }
+    if (t > 0 && t < 1.5) { tz = THREE.MathUtils.clamp(ball.pos.z + ball.vel.z * t, -GW - 0.3, GW + 0.3); speed = fooled ? 6.5 : t < 0.5 ? 12 : 9; }
   }
   const inBox = Math.abs(ball.pos.x - gx) < 9 && Math.abs(ball.pos.z) < 10;
   if (!incoming && inBox && (!ball.owner || ball.owner.team !== b.team) && ball.vel.length() < 10) {
@@ -1102,7 +1118,7 @@ function drawHud() {
 }
 
 // ================= main loop =================
-let last = performance.now(), clockT = 0;
+let last = performance.now(), clockT = 0, gameT = 0;
 function frame(now) {
   requestAnimationFrame(frame);
   const rdt = Math.min(0.05, (now - last) / 1000); last = now; clockT += rdt;
@@ -1117,6 +1133,7 @@ function frame(now) {
     document.body.classList.toggle('slowmo', slow || curving);
   } else document.body.classList.remove('slowmo');
   const dt = rdt * timeScale;
+  gameT += dt;
   const live = state === 'play' || state === 'goal';
   if (live) {
     if (state === 'play') {
