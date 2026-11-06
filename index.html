@@ -351,7 +351,7 @@ function kick(g, dir, speed, curve, sup) {
   ball.vel.copy(dir).normalize().multiplyScalar(speed);
   ball.spin.copy(rightOf(yawTo(f.x, f.z))).multiplyScalar(curve || 0);
   ball.super = sup ? 1 : 0; ball.last = g; g.kickCd = 0.3; ball.kickT = gameT;
-  ball.shotDist = Math.hypot(g.dir * W - g.pos.x, g.pos.z);
+  ball.shotDist = Math.hypot(g.dir * W - g.pos.x, g.pos.z); ball.roll = Math.random();
   ball.ignore = null; ball.header = false; human.pullT = 0; ball.curveT = 0;
   sfx.kick(Math.min(1, speed / 30), sup);
   if (sup) { shake = 0.5; fovKick = 14; fx.burst(ball.pos, 0xf0abfc, 30); }
@@ -396,7 +396,7 @@ function header(g) {
   ball.vel.copy(dir).multiplyScalar(Math.min(30, 11 + bs * 0.35 + (air ? 6 : 0)));
   ball.spin.set(0, 0, 0); ball.super = 0; ball.last = g; ball.header = true;
   ball.ignore = g; ball.ignoreT = 0.3; ball.kickT = gameT; g.kickCd = 0.2;
-  ball.shotDist = Math.hypot(g.dir * W - g.pos.x, g.pos.z);
+  ball.shotDist = Math.hypot(g.dir * W - g.pos.x, g.pos.z); ball.roll = Math.random();
   sfx.header(); fx.burst(ball.pos, 0xffffff, 8);
   if (g.human && air) { toast('Flying header!'); shake = Math.max(shake, 0.15); }
 }
@@ -543,11 +543,12 @@ function gkClear(g, bs) {
   if (bs > 20) toast('What a save!');
 }
 
-// their keeper covers more of the goal the closer you shoot from (0..1) — curlers don't count
+// their keeper is likelier to get a big reach on a shot the closer you shot from — curlers don't count
 const isCurling = () => ball.spin.lengthSq() > 16;
 function keeperBoost(g) {
   if (g.team !== 1 || !ball.last || ball.last.team !== 0 || isCurling()) return 0;
-  return THREE.MathUtils.clamp((14 - (ball.shotDist || 99)) / 12, 0, 1);
+  const chance = THREE.MathUtils.clamp((14 - (ball.shotDist || 99)) / 12, 0, 1); // ~92% at 3m, 67% at 6m, 33% at 10m
+  return ball.roll < chance ? 1 : 0;
 }
 
 function possession(dt) {
