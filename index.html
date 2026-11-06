@@ -483,8 +483,8 @@ function updateBall(dt) {
         // knuckleball: it dances sideways and up/down on the way (on top of any curve)
         ball.knT += dt;
         const side = new V(-ball.vel.z, 0, ball.vel.x).normalize();
-        ball.vel.addScaledVector(side, Math.sin(ball.knT * 19 + ball.knP[0]) * 55 * dt);
-        ball.vel.y += Math.sin(ball.knT * 15 + ball.knP[1]) * 28 * dt;
+        ball.vel.addScaledVector(side, Math.sin(ball.knT * 19 + ball.knP[0]) * 90 * dt);
+        ball.vel.y += Math.sin(ball.knT * 15 + ball.knP[1]) * 45 * dt;
       }
     }
     else if (ball.curveT > 0) fx.curveTrail(ball.pos);
@@ -1023,7 +1023,7 @@ function botShoot(b) {
   }
   const aim = new V(b.dir * (W + 1), y, z);
   const d = aim.sub(ball.pos), dist = d.length();
-  const speed = sharp ? 29 + Math.random() * 7 : 19 + Math.random() * 9, t = dist / speed;
+  const speed = sharp ? 32 + Math.random() * 7 : 19 + Math.random() * 9, t = dist / speed;
   d.normalize(); d.y += 0.5 * GRAV * t * t / dist;
   b.yaw = yawTo(d.x, d.z);
   kick(b, d, speed, sharp ? 0 : (Math.random() - .5) * 8, false);
@@ -1119,10 +1119,10 @@ function gkThink(b, dt) {
   let tx = lineX, tz = THREE.MathUtils.clamp(ball.pos.z * 0.4, -GW + 0.8, GW - 0.8), speed = 6;
   // small reaction delay; their keeper is slow to read a curling shot
   const fooled = b.team === 1 && isCurling() && ball.fool; // only half of curlers fool their keeper
-  const incoming = !ball.owner && ball.vel.x * -b.dir > 4 && gameT - ball.kickT > (fooled ? 0.4 : b.team === 0 ? 0.22 : 0.18); // your keeper is a touch slower
+  const incoming = !ball.owner && ball.vel.x * -b.dir > 4 && gameT - ball.kickT > (fooled ? 0.4 : b.team === 0 ? 0.25 : 0.18); // your keeper is a touch slower
   if (incoming) {
     const t = (lineX - ball.pos.x) / ball.vel.x;
-    if (t > 0 && t < 1.5) { tz = THREE.MathUtils.clamp(ball.pos.z + ball.vel.z * t, -GW - 0.3, GW + 0.3); speed = fooled ? 6.5 : b.team === 0 ? (t < 0.5 ? 11 : 8.5) : t < 0.5 ? 12 : 9; }
+    if (t > 0 && t < 1.5) { tz = THREE.MathUtils.clamp(ball.pos.z + ball.vel.z * t, -GW - 0.3, GW + 0.3); speed = fooled ? 6.5 : b.team === 0 ? (t < 0.5 ? 10.5 : 8) : t < 0.5 ? 12 : 9; }
   }
   // their keeper comes off the line when you get near the box: charges, tackles, leaps
   if (!incoming && b.team === 1 && humanNearBox() &&
