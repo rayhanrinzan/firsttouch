@@ -571,8 +571,11 @@ function gkClear(g, bs) {
 const isCurling = () => ball.spin.lengthSq() > 16;
 const humanNearBox = () => W - human.pos.x < 11 && Math.abs(human.pos.z) < 12;
 function keeperBoost(g) {
-  if (g.team !== 1 || !ball.last || ball.last.team !== 0 || isCurling()) return 0;
-  const chance = THREE.MathUtils.clamp((14 - (ball.shotDist || 99)) / 12, 0, 1); // ~92% at 3m, 67% at 6m, 33% at 10m
+  if (g.team !== 1 || !ball.last || ball.last.team !== 0) return 0;
+  const dist = ball.shotDist || 99;
+  let chance = isCurling() ? 0 : THREE.MathUtils.clamp((14 - dist) / 12, 0, 1); // ~92% at 3m, 67% at 6m, 33% at 10m
+  // mid-range super shots (around the edge of the box) get a real chance of being stopped
+  if (ball.super && dist > 7 && dist < 21) chance = Math.max(chance, isCurling() ? 0.35 : 0.6);
   return ball.roll < chance ? 1 : 0;
 }
 
@@ -1119,10 +1122,10 @@ function gkThink(b, dt) {
   let tx = lineX, tz = THREE.MathUtils.clamp(ball.pos.z * 0.4, -GW + 0.8, GW - 0.8), speed = 6;
   // small reaction delay; their keeper is slow to read a curling shot
   const fooled = b.team === 1 && isCurling() && ball.fool; // only half of curlers fool their keeper
-  const incoming = !ball.owner && ball.vel.x * -b.dir > 4 && gameT - ball.kickT > (fooled ? 0.4 : b.team === 0 ? 0.25 : 0.18); // your keeper is a touch slower
+  const incoming = !ball.owner && ball.vel.x * -b.dir > 4 && gameT - ball.kickT > (fooled ? 0.4 : b.team === 0 ? 0.25 : ball.super ? 0.1 : 0.18); // your keeper is a touch slower; theirs is sharp on rockets
   if (incoming) {
     const t = (lineX - ball.pos.x) / ball.vel.x;
-    if (t > 0 && t < 1.5) { tz = THREE.MathUtils.clamp(ball.pos.z + ball.vel.z * t, -GW - 0.3, GW + 0.3); speed = fooled ? 6.5 : b.team === 0 ? (t < 0.5 ? 10.5 : 8) : t < 0.5 ? 12 : 9; }
+    if (t > 0 && t < 1.5) { tz = THREE.MathUtils.clamp(ball.pos.z + ball.vel.z * t, -GW - 0.3, GW + 0.3); speed = fooled ? 6.5 : b.team === 1 && ball.super ? 13 : b.team === 0 ? (t < 0.5 ? 10.5 : 8) : t < 0.5 ? 12 : 9; }
   }
   // their keeper comes off the line when you get near the box: charges, tackles, leaps
   if (!incoming && b.team === 1 && humanNearBox() &&
