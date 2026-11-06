@@ -545,6 +545,7 @@ function gkClear(g, bs) {
 
 // their keeper is likelier to get a big reach on a shot the closer you shot from — curlers don't count
 const isCurling = () => ball.spin.lengthSq() > 16;
+const humanNearBox = () => W - human.pos.x < 11 && Math.abs(human.pos.z) < 12;
 function keeperBoost(g) {
   if (g.team !== 1 || !ball.last || ball.last.team !== 0 || isCurling()) return 0;
   const chance = THREE.MathUtils.clamp((14 - (ball.shotDist || 99)) / 12, 0, 1); // ~92% at 3m, 67% at 6m, 33% at 10m
@@ -564,7 +565,8 @@ function possession(dt) {
     // anything at head height gets headed
     if (!ball.owner && !gk && ball.ignore !== g && !(ball.super && bs > 12) && d < 0.95 && rel > 1.0 && rel < 2.7) { header(g); continue; }
     const boost = gk ? keeperBoost(g) : 0;
-    if (d > (gk ? 1.4 + 1.3 * boost : 1.05) || rel > (gk ? 2.7 + 0.8 * boost : 1.0) || rel < -0.5) continue;
+    const alert = gk && g.team === 1 && humanNearBox() ? 0.6 : 0; // bigger repel zone when you're close
+    if (d > (gk ? 1.4 + 1.3 * boost + alert : 1.05) || rel > (gk ? 2.7 + 0.8 * boost + alert : 1.0) || rel < -0.5) continue;
     if (ball.owner) {
       if (ball.owner.team === g.team || ball.owner.immune > 0) continue;
       if (Math.random() < dt * (g.human ? 3 : 1.3)) { ball.owner.kickCd = 0.8; take(g); sfx.tackle(); if (gk) gkClear(g, bs); }
@@ -1072,6 +1074,21 @@ function gkThink(b, dt) {
   if (incoming) {
     const t = (lineX - ball.pos.x) / ball.vel.x;
     if (t > 0 && t < 1.5) { tz = THREE.MathUtils.clamp(ball.pos.z + ball.vel.z * t, -GW - 0.3, GW + 0.3); speed = fooled ? 6.5 : t < 0.5 ? 12 : 9; }
+  }
+  // their keeper comes off the line when you get near the box: charges, tackles, leaps
+  if (!incoming && b.team === 1 && humanNearBox() &&
+      (ball.owner === human || (!ball.owner && hdist(ball.pos, { x: gx, z: 0 }) < 12))) {
+    steer(b, ball.pos.x, ball.pos.z, 11);
+    const d = hdist(b.pos, ball.pos), h = ball.pos.y;
+    if (b.pos.y <= 0.001 && b.kickCd <= 0 && d < 3.2 && h - b.pos.y > 1.6 && h < 5.5) {
+      // leap at it, mid-air or not
+      b.vy = 10.5;
+      b.vel.copy(new V(ball.pos.x - b.pos.x, 0, ball.pos.z - b.pos.z).normalize().multiplyScalar(7));
+    }
+    if (ball.owner === human && (human.immune <= 0 || human.pos.y > 0.1) && d < 1.9 && Math.abs(h - (b.pos.y + 1.2)) < 2.2 && Math.random() < dt * 4) {
+      human.kickCd = 0.6; gkClear(b, 0); sfx.tackle(); shake = Math.max(shake, 0.25); toast('Keeper snatches it!');
+    }
+    return;
   }
   const inBox = Math.abs(ball.pos.x - gx) < 9 && Math.abs(ball.pos.z) < 10;
   if (!incoming && inBox && (!ball.owner || ball.owner.team !== b.team) && ball.vel.length() < 10) {
