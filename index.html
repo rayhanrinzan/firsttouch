@@ -464,9 +464,13 @@ function updateBall(dt) {
       const to = new V(me.pos.x, me.pos.y + 1.4, me.pos.z).sub(ball.pos), d = to.length();
       // home in on you rather than just accelerate, so it doesn't overshoot
       if (d > 0.5) ball.vel.lerp(to.normalize().multiplyScalar(Math.min(16, d * 4)), 1 - Math.exp(-5 * dt));
-    } else if (ball.pos.y > 1.2 && !ball.super && !ball.toHuman && me.stun <= 0 && !(ball.last === me && gameT - ball.kickT < 0.5)) {
-      const to = new V(me.pos.x, me.pos.y + 1.6, me.pos.z).sub(ball.pos), d = to.length();
-      if (d < 7.5 && d > 0.3) ball.vel.addScaledVector(to.normalize(), (me.pos.y > 0.25 ? 38 : 20) * (1 - d / 7.5) * dt); // stronger while you're airborne
+    } else if (!ball.super && me.stun <= 0 && !(ball.last === me && gameT - ball.kickT < 0.5) && !(ball.toHuman && ball.pos.y > 1.2)) {
+      // a loose ball (or a pass to you) is drawn in: low balls to your feet, high balls to your head
+      const low = ball.pos.y < 1.2;
+      const to = new V(me.pos.x, low ? BR : me.pos.y + 1.6, me.pos.z).sub(ball.pos), d = to.length();
+      const pull = low ? 18 : me.pos.y > 0.25 ? 38 : 20; // strongest while you're airborne
+      const away = -ball.vel.dot(to) / Math.max(d, 1e-3); // speed heading away from you (shots, passes out)
+      if (d < 7.5 && d > 0.3 && away < 5) ball.vel.addScaledVector(to.normalize(), pull * (1 - d / 7.5) * dt);
     }
     ball.pos.addScaledVector(ball.vel, dt);
     if (ball.pos.y < BR) {
