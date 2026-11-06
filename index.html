@@ -351,7 +351,7 @@ function kick(g, dir, speed, curve, sup) {
   ball.vel.copy(dir).normalize().multiplyScalar(speed);
   ball.spin.copy(rightOf(yawTo(f.x, f.z))).multiplyScalar(curve || 0);
   ball.super = sup ? 1 : 0; ball.last = g; g.kickCd = 0.3; ball.kickT = gameT;
-  ball.shotDist = Math.hypot(g.dir * W - g.pos.x, g.pos.z); ball.roll = Math.random(); ball.fool = Math.random() < 0.25;
+  ball.shotDist = Math.hypot(g.dir * W - g.pos.x, g.pos.z); ball.roll = Math.random(); ball.fool = Math.random() < 0.5;
   ball.ignore = null; ball.header = false; human.pullT = 0; ball.curveT = 0; ball.toHuman = false;
   sfx.kick(Math.min(1, speed / 30), sup);
   if (sup) { shake = 0.5; fovKick = 14; fx.burst(ball.pos, 0xf0abfc, 30); }
@@ -421,7 +421,7 @@ function header(g) {
   } else ball.toHuman = false;
   ball.spin.set(0, 0, 0); ball.super = 0; ball.last = g; ball.header = true;
   ball.ignore = g; ball.ignoreT = 0.3; ball.kickT = gameT; g.kickCd = 0.2;
-  ball.shotDist = Math.hypot(g.dir * W - g.pos.x, g.pos.z); ball.roll = Math.random(); ball.fool = Math.random() < 0.25;
+  ball.shotDist = Math.hypot(g.dir * W - g.pos.x, g.pos.z); ball.roll = Math.random(); ball.fool = Math.random() < 0.5;
   sfx.header(); fx.burst(ball.pos, 0xffffff, 8);
   if (g.human && air) { toast('Flying header!'); shake = Math.max(shake, 0.15); }
 }
@@ -1130,7 +1130,7 @@ function gkThink(b, dt) {
   const GW = gw(-b.dir);
   let tx = lineX, tz = THREE.MathUtils.clamp(ball.pos.z * 0.4, -GW + 0.8, GW - 0.8), speed = 6;
   // small reaction delay; their keeper is slow to read a curling shot
-  const fooled = b.team === 1 && isCurling() && ball.fool; // only a quarter of curlers fool their keeper
+  const fooled = b.team === 1 && isCurling() && ball.fool; // only half of curlers fool their keeper
   const incoming = !ball.owner && ball.vel.x * -b.dir > 4 && gameT - ball.kickT > (fooled ? 0.4 : b.team === 0 ? 0.25 : ball.super ? 0.1 : 0.15); // your keeper is a touch slower; theirs is sharp on rockets
   if (incoming) {
     const t = (lineX - ball.pos.x) / ball.vel.x;
