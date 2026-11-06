@@ -352,7 +352,7 @@ function kick(g, dir, speed, curve, sup) {
   ball.spin.copy(rightOf(yawTo(f.x, f.z))).multiplyScalar(curve || 0);
   ball.super = sup ? 1 : 0; ball.last = g; g.kickCd = 0.3; ball.kickT = gameT;
   ball.shotDist = Math.hypot(g.dir * W - g.pos.x, g.pos.z); ball.roll = Math.random();
-  ball.ignore = null; ball.header = false; human.pullT = 0; ball.curveT = 0;
+  ball.ignore = null; ball.header = false; human.pullT = 0; ball.curveT = 0; ball.toHuman = false;
   sfx.kick(Math.min(1, speed / 30), sup);
   if (sup) { shake = 0.5; fovKick = 14; fx.burst(ball.pos, 0xf0abfc, 30); }
 }
@@ -362,6 +362,8 @@ function lob(from, tx, ty, tz, T) {
   const f = new V(tx - from.pos.x, 0, tz - from.pos.z).normalize();
   const sx = from.pos.x + f.x * 0.9, sz = from.pos.z + f.z * 0.9, sy = Math.max(BR, ball.pos.y);
   const v = new V((tx - sx) / T, (ty - sy + 0.5 * GRAV * T * T) / T, (tz - sz) / T);
+  const drag = 0.08 * T / (1 - Math.exp(-0.08 * T)); // make up for air drag so it lands on target
+  v.x *= drag; v.z *= drag;
   const s = v.length();
   kick(from, v.divideScalar(s), s, 0, false);
 }
@@ -372,13 +374,30 @@ function passTo(from, target) {
   lob(from, target.x, 1.9, target.z, 0.55 + dist * 0.035);
 }
 
+// where you'll be when a pass gets there: leads you along your current velocity
+function leadOnHuman(fromPos) {
+  let t = human.pos.clone(), T = 0.5;
+  for (let i = 0; i < 8; i++) { T = 0.45 + hdist(t, fromPos) * 0.04; t = human.pos.clone().addScaledVector(human.vel, T); }
+  t.x = THREE.MathUtils.clamp(t.x, -W + 1, W - 1); t.z = THREE.MathUtils.clamp(t.z, -H + 1, H - 1);
+  // land it at your feet so you trap it (chest height if you're in the air)
+  t.y = human.pos.y > 0.3 ? human.pos.y + human.vy * T - 0.5 * 22 * T * T + 1.2 : 0.6;
+  t.y = Math.max(0.6, t.y);
+  return { t, T };
+}
+function passToHuman(from) {
+  const { t, T } = leadOnHuman(ball.pos);
+  from.yaw = yawTo(t.x - from.pos.x, t.z - from.pos.z);
+  lob(from, t.x, t.y, t.z, T);
+  ball.toHuman = true; // aimed pass: the magnet leaves it alone
+}
+
 function take(g) {
-  ball.owner = g; ball.last = g; ball.super = 0; ball.spin.set(0, 0, 0); ball.header = false; human.pullT = 0;
+  ball.owner = g; ball.last = g; ball.super = 0; ball.spin.set(0, 0, 0); ball.header = false; human.pullT = 0; ball.toHuman = false;
 }
 
 function botHeaderDir(g) {
   const goalX = g.dir * W, dGoal = Math.hypot(goalX - g.pos.x, g.pos.z), GW = gw(g.dir);
-  if (dGoal < 17) {
+  if (dGoal < (g.team === 1 ? 24 : 17)) {
     const aim = new V(goalX, 0.8 + Math.random(), (Math.random() * 2 - 1) * (GW - 0.8));
     return aim.sub(ball.pos).normalize();
   }
@@ -394,6 +413,12 @@ function header(g) {
   else dir = botHeaderDir(g);
   dir.normalize();
   ball.vel.copy(dir).multiplyScalar(Math.min(30, 11 + bs * 0.35 + (air ? 6 : 0)));
+  if (!g.human && g.team === human.team && human.stun <= 0) {
+    // your teammates nod it on to you, led to where you're running
+    const { t, T } = leadOnHuman(ball.pos);
+    ball.vel.set((t.x - ball.pos.x) / T, (t.y - ball.pos.y + 0.5 * GRAV * T * T) / T, (t.z - ball.pos.z) / T);
+    ball.toHuman = true;
+  } else ball.toHuman = false;
   ball.spin.set(0, 0, 0); ball.super = 0; ball.last = g; ball.header = true;
   ball.ignore = g; ball.ignoreT = 0.3; ball.kickT = gameT; g.kickCd = 0.2;
   ball.shotDist = Math.hypot(g.dir * W - g.pos.x, g.pos.z); ball.roll = Math.random();
@@ -439,7 +464,7 @@ function updateBall(dt) {
       const to = new V(me.pos.x, me.pos.y + 1.4, me.pos.z).sub(ball.pos), d = to.length();
       // home in on you rather than just accelerate, so it doesn't overshoot
       if (d > 0.5) ball.vel.lerp(to.normalize().multiplyScalar(Math.min(16, d * 4)), 1 - Math.exp(-5 * dt));
-    } else if (ball.pos.y > 1.2 && !ball.super && me.stun <= 0 && !(ball.last === me && gameT - ball.kickT < 0.5)) {
+    } else if (ball.pos.y > 1.2 && !ball.super && !ball.toHuman && me.stun <= 0 && !(ball.last === me && gameT - ball.kickT < 0.5)) {
       const to = new V(me.pos.x, me.pos.y + 1.6, me.pos.z).sub(ball.pos), d = to.length();
       if (d < 7.5 && d > 0.3) ball.vel.addScaledVector(to.normalize(), (me.pos.y > 0.25 ? 38 : 20) * (1 - d / 7.5) * dt); // stronger while you're airborne
     }
@@ -532,9 +557,7 @@ function collideArena() {
 function gkClear(g, bs) {
   ball.owner = null;
   if (g.team === human.team && human.stun <= 0) {
-    const t = human.pos.clone().addScaledVector(human.vel, 0.6);
-    g.yaw = yawTo(t.x - g.pos.x, t.z - g.pos.z);
-    passTo(g, t);
+    passToHuman(g);
   } else {
     const d = new V(g.dir, 0.5 + Math.random() * 0.3, (Math.random() - .5) * 1.2).normalize();
     g.yaw = yawTo(d.x, d.z);
@@ -587,7 +610,7 @@ function possession(dt) {
       continue;
     }
     if (gk) gkClear(g, bs);
-    else if (bs < 20) take(g);
+    else if (bs < 20 || (g.human && ball.toHuman)) take(g); // you always cushion a pass meant for you
     else {
       const n = new V(ball.pos.x - g.pos.x, 0, ball.pos.z - g.pos.z).normalize();
       reflectBall(n, 0.5); ball.vel.multiplyScalar(0.6);
@@ -995,12 +1018,12 @@ function botShoot(b) {
   if (sharp) {
     // opponents pick the corner away from your keeper and pick their height
     const keeper = guys.find(g => g.role === 'gk' && g.team !== b.team);
-    z = (keeper && keeper.pos.z > 0 ? -1 : 1) * (GW - 0.8 - Math.random() * 1.2);
+    z = (keeper && keeper.pos.z > 0 ? -1 : 1) * (GW - 0.6 - Math.random() * 0.9); // tight to the far post
     y = 0.5 + Math.random() * (GH - 1.3);
   }
   const aim = new V(b.dir * (W + 1), y, z);
   const d = aim.sub(ball.pos), dist = d.length();
-  const speed = sharp ? 25 + Math.random() * 8 : 19 + Math.random() * 9, t = dist / speed;
+  const speed = sharp ? 29 + Math.random() * 7 : 19 + Math.random() * 9, t = dist / speed;
   d.normalize(); d.y += 0.5 * GRAV * t * t / dist;
   b.yaw = yawTo(d.x, d.z);
   kick(b, d, speed, sharp ? 0 : (Math.random() - .5) * 8, false);
@@ -1034,12 +1057,19 @@ function fieldThink(b, dt) {
     if (threat && td < 4) tz = b.pos.z + (b.pos.z > threat.pos.z ? 5 : -5);
     steer(b, goalX, THREE.MathUtils.clamp(tz, -H + 2, H - 2), 7.5);
     turnTo(b, b.wish.x, b.wish.z, dt);
-    if ((b.think -= dt) <= 0 && b.hold > 0.35) {
-      b.think = 0.25;
+    const sharp = b.team === 1;
+    if ((b.think -= dt) <= 0 && b.hold > (sharp ? 0.12 : 0.2)) {
+      b.think = sharp ? 0.1 : 0.25;
       const dGoal = Math.hypot(goalX - b.pos.x, b.pos.z);
+      // your teammates' first priority: get it to you
+      if (b.team === human.team && human.stun <= 0) return passToHuman(b);
+      // opponents' first priority: shoot from anywhere around the box
+      if (sharp && dGoal < 26 && Math.random() < 0.85)
+        return dGoal < 20 && Math.random() < 0.15
+          ? lob(b, goalX * 1.02, gh(b.dir) - 0.7, (Math.random() * 2 - 1) * (gw(b.dir) - 1), 0.9 + dGoal * 0.02)
+          : botShoot(b);
       // chip over the keeper
       if (dGoal < 20 && Math.random() < 0.2) return lob(b, goalX * 1.02, gh(b.dir) - 0.7, (Math.random() * 2 - 1) * (gw(b.dir) - 1), 0.9 + dGoal * 0.02);
-      const sharp = b.team === 1; // opponents shoot from further out and more often
       if (dGoal < (sharp ? 23 : 18) && Math.random() < (sharp ? 0.65 : 0.4)) return botShoot(b);
       // from out wide, whip a cross into the box for a header
       if (Math.abs(b.pos.z) > 7 && (goalX - b.pos.x) * b.dir < 15 && Math.random() < 0.6) {
@@ -1089,10 +1119,10 @@ function gkThink(b, dt) {
   let tx = lineX, tz = THREE.MathUtils.clamp(ball.pos.z * 0.4, -GW + 0.8, GW - 0.8), speed = 6;
   // small reaction delay; their keeper is slow to read a curling shot
   const fooled = b.team === 1 && isCurling();
-  const incoming = !ball.owner && ball.vel.x * -b.dir > 4 && gameT - ball.kickT > (fooled ? 0.4 : 0.18);
+  const incoming = !ball.owner && ball.vel.x * -b.dir > 4 && gameT - ball.kickT > (fooled ? 0.4 : b.team === 0 ? 0.22 : 0.18); // your keeper is a touch slower
   if (incoming) {
     const t = (lineX - ball.pos.x) / ball.vel.x;
-    if (t > 0 && t < 1.5) { tz = THREE.MathUtils.clamp(ball.pos.z + ball.vel.z * t, -GW - 0.3, GW + 0.3); speed = fooled ? 6.5 : t < 0.5 ? 12 : 9; }
+    if (t > 0 && t < 1.5) { tz = THREE.MathUtils.clamp(ball.pos.z + ball.vel.z * t, -GW - 0.3, GW + 0.3); speed = fooled ? 6.5 : b.team === 0 ? (t < 0.5 ? 11 : 8.5) : t < 0.5 ? 12 : 9; }
   }
   // their keeper comes off the line when you get near the box: charges, tackles, leaps
   if (!incoming && b.team === 1 && humanNearBox() &&
