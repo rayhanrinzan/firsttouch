@@ -437,10 +437,11 @@ function updateBall(dt) {
     if (me.pullT > 0) {
       me.pullT -= dt;
       const to = new V(me.pos.x, me.pos.y + 1.4, me.pos.z).sub(ball.pos), d = to.length();
-      if (d > 0.5) ball.vel.addScaledVector(to.normalize(), 26 * dt);
+      // home in on you rather than just accelerate, so it doesn't overshoot
+      if (d > 0.5) ball.vel.lerp(to.normalize().multiplyScalar(Math.min(16, d * 4)), 1 - Math.exp(-5 * dt));
     } else if (ball.pos.y > 1.2 && !ball.super && me.stun <= 0 && !(ball.last === me && gameT - ball.kickT < 0.5)) {
       const to = new V(me.pos.x, me.pos.y + 1.6, me.pos.z).sub(ball.pos), d = to.length();
-      if (d < 6 && d > 0.3) ball.vel.addScaledVector(to.normalize(), (me.pos.y > 0.25 ? 30 : 16) * (1 - d / 6) * dt); // stronger while you're airborne
+      if (d < 7.5 && d > 0.3) ball.vel.addScaledVector(to.normalize(), (me.pos.y > 0.25 ? 38 : 20) * (1 - d / 7.5) * dt); // stronger while you're airborne
     }
     ball.pos.addScaledVector(ball.vel, dt);
     if (ball.pos.y < BR) {
@@ -656,6 +657,16 @@ function humanPass() {
   if (best) { bootT = 0; passTo(human, best.pos.clone().addScaledVector(best.vel, 0.5)); }
 }
 
+// jumping calls a loose, nearby ball to you if nobody else is closer to it
+function callBall(me, range) {
+  const myD = hdist(me.pos, ball.pos);
+  if (ball.owner || myD > range || guys.some(g => g !== me && g.stun <= 0 && hdist(g.pos, ball.pos) < myD)) return;
+  me.pullT = 1.0;
+  const to = new V(me.pos.x, me.pos.y + 1.4, me.pos.z).sub(ball.pos).normalize();
+  ball.vel.addScaledVector(to, 5); fx.burst(ball.pos.clone(), 0x93c5fd, 10);
+  if (ball.pos.y < 1) ball.vel.y = Math.max(ball.vel.y, 6); // pop it off the ground so it rises to meet you
+}
+
 function updateHuman(dt) {
   const me = human;
   me.yaw = yaw;
@@ -691,16 +702,8 @@ function updateHuman(dt) {
   wantDash = false;
   if (wantJump && (me.jumps || 0) < 2) {
     me.vy = me.jumps ? 12 : 11; me.jumps = (me.jumps || 0) + 1;
-    if (me.jumps === 2) {
-      fx.burst(me.pos.clone(), 0xffffff, 12); sfx.bounce(0.5);
-      // double jump calls a loose, nearby ball to you if nobody else is closer to it
-      const myD = hdist(me.pos, ball.pos);
-      if (!ball.owner && myD < 11 && !guys.some(g => g !== me && g.stun <= 0 && hdist(g.pos, ball.pos) < myD)) {
-        me.pullT = 0.9;
-        const to = new V(me.pos.x, me.pos.y + 1.4, me.pos.z).sub(ball.pos).normalize();
-        ball.vel.addScaledVector(to, 4); fx.burst(ball.pos.clone(), 0x93c5fd, 10);
-      }
-    }
+    if (me.jumps === 2) { fx.burst(me.pos.clone(), 0xffffff, 12); sfx.bounce(0.5); }
+    callBall(me, 13);
   }
   if (wantPass) humanPass();
   if (wantTackle && me.slideCd <= 0) { // works mid-air too: a flying dive
@@ -1005,6 +1008,22 @@ function botShoot(b) {
 
 function fieldThink(b, dt) {
   const goalX = b.dir * W, carrier = ball.owner;
+  // you have the ball near their box: every red defender close by swarms you, and leaps if you're airborne
+  if (b.team === 1 && carrier === human && humanNearBox() && hdist(b.pos, ball.pos) < 12) {
+    steer(b, ball.pos.x, ball.pos.z, 13);
+    const d = hdist(b.pos, ball.pos), up = human.pos.y;
+    if (up > 0.2 && b.pos.y <= 0.001 && b.kickCd <= 0 && d < 3 && up > 0.3 && up < 3.5) {
+      b.vy = 10;
+      b.vel.copy(new V(ball.pos.x - b.pos.x, 0, ball.pos.z - b.pos.z).normalize().multiplyScalar(7));
+    }
+    if (b.pos.y > 0.2 && d < 1.6 && Math.abs(ball.pos.y - (b.pos.y + 1.2)) < 1.8 && Math.random() < dt * 3) {
+      // jump tackle: knock it loose
+      const f = new V(ball.pos.x - b.pos.x, 0, ball.pos.z - b.pos.z).normalize();
+      ball.owner = null; ball.vel.set(f.x * 6, 5, f.z * 6); ball.ignore = b; ball.ignoreT = 0.4;
+      human.kickCd = 0.5; b.kickCd = 0.5; sfx.tackle(); shake = Math.max(shake, 0.25); toast('Jump tackle!');
+    }
+    return;
+  }
   if (carrier === b) {
     b.hold += dt;
     let tz = b.pos.z * 0.6, threat = null, td = 1e9;
